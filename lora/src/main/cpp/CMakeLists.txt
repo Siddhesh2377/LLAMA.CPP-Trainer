@@ -94,7 +94,7 @@ set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 set(GGML_OPENMP ON CACHE BOOL "" FORCE)            # Parallel threading via NDK's libomp
 set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)         # Conflicts with dotprod/i8mm
 set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)      # Requires CMake 3.24+ for FetchContent URL fix
-set(GGML_CPU_REPACK ON CACHE BOOL "" FORCE)         # Runtime weight layout optimization
+set(GGML_CPU_REPACK OFF CACHE BOOL "" FORCE)        # Incompatible with training backward pass
 set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod" CACHE STRING "" FORCE)  # NEON + dotprod (most modern phones)
 
 # Don't build examples/tests/tools - just the library
