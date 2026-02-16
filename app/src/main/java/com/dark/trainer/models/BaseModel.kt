@@ -7,9 +7,15 @@ import kotlinx.serialization.Serializable
 data class BaseModel(
     val id: String,
     val name: String,
-    @SerialName("huggingface_id") val huggingfaceId: String,
+    val description: String? = null,
+    @SerialName("model_download_link") val modelDownloadLink: String,
+    @SerialName("architecture") val architecture: String? = null,  // e.g., "Qwen2.5", "Llama-3.2"
+    @SerialName("parameter_count") val parameterCount: String? = null,  // e.g., "1.5B", "350M"
+    @SerialName("quantization") val quantization: String? = null,  // e.g., "Q4_K_M", "Q8_0"
+    @SerialName("context_length") val contextLength: Int? = null,  // e.g., 2048, 4096
     val version: String,
     @SerialName("size_mb") val sizeMb: Int?,
+    @SerialName("checksum_sha256") val checksumSha256: String? = null,
     @SerialName("is_active") val isActive: Boolean,
     @SerialName("created_at") val createdAt: String,
     @SerialName("updated_at") val updatedAt: String
@@ -50,4 +56,61 @@ data class UpdateLog(
     @SerialName("adapter_id") val adapterId: String,
     @SerialName("installation_status") val installationStatus: String,
     @SerialName("error_message") val errorMessage: String? = null
+)
+
+// ============================================
+// Local storage models (not synced to Supabase)
+// These are stored locally in SharedPreferences as JSON
+// ============================================
+
+/**
+ * Represents a locally downloaded model/adapter
+ */
+@Serializable
+data class LocalModel(
+    val baseModelId: String,
+    val modelName: String,
+    val localPath: String,
+    val downloadedAt: Long = System.currentTimeMillis(),
+    val sizeBytes: Long = 0
+)
+
+@Serializable
+data class LocalAdapter(
+    val adapterId: String,
+    val baseModelId: String,
+    val adapterName: String,
+    val domain: String,
+    val localPath: String,
+    val downloadedAt: Long = System.currentTimeMillis(),
+    val sizeBytes: Long = 0
+)
+
+/**
+ * Chat message for conversation
+ */
+data class ChatMessage(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val role: ChatRole,
+    val content: String,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+enum class ChatRole {
+    USER,
+    ASSISTANT,
+    SYSTEM
+}
+
+/**
+ * Chat conversation
+ */
+data class Conversation(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val title: String = "New Chat",
+    val messages: List<ChatMessage> = emptyList(),
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    val baseModelId: String? = null,
+    val adapterId: String? = null
 )

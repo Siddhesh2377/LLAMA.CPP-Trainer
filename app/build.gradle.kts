@@ -58,6 +58,11 @@ dependencies {
 
     // Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
+
+    // Apache Commons Compress for tar.gz extraction
+    implementation("org.apache.commons:commons-compress:1.27.1")
+    implementation(project(":lora"))
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)

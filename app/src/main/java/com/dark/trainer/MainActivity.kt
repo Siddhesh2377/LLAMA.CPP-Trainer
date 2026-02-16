@@ -6,14 +6,18 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.*
-import com.dark.trainer.ui.components.AdapterUpdateDialog
-import com.dark.trainer.ui.screens.MainScreen
+import androidx.compose.ui.platform.LocalContext
+import com.dark.trainer.ui.components.SettingsDialog
+import com.dark.trainer.ui.screens.ChatScreen
+import com.dark.trainer.ui.screens.ModelLibraryScreen
 import com.dark.trainer.ui.theme.TrainerTheme
-import com.dark.trainer.viewmodel.AdapterUpdateViewModel
+import com.dark.trainer.viewmodel.ChatViewModel
+import com.dark.trainer.viewmodel.ModelManagerViewModel
 
 class MainActivity : ComponentActivity() {
 
-    private val viewModel: AdapterUpdateViewModel by viewModels()
+    private val chatViewModel: ChatViewModel by viewModels()
+    private val modelManagerViewModel: ModelManagerViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -21,30 +25,104 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             TrainerTheme {
-                val updateState by viewModel.updateState.collectAsState()
-
-                // Show update dialog if updates are available
-                if (updateState.updatesAvailable.isNotEmpty()) {
-                    AdapterUpdateDialog(
-                        updates = updateState.updatesAvailable,
-                        isDownloading = updateState.downloading,
-                        downloadProgress = updateState.downloadProgress,
-                        onDownload = { adapter ->
-                            viewModel.downloadAndInstallAdapter(adapter)
-                        },
-                        onDismiss = {
-                            // User dismissed - clear updates for now
-                            viewModel.dismissUpdates()
-                        }
-                    )
-                }
-
-                // Main app screen
-                MainScreen(
-                    updateState = updateState,
-                    onCheckForUpdates = { viewModel.checkForUpdates() }
+                AppContent(
+                    chatViewModel = chatViewModel,
+                    modelManagerViewModel = modelManagerViewModel
                 )
             }
         }
     }
+}
+
+@Composable
+fun AppContent(
+    chatViewModel: ChatViewModel,
+    modelManagerViewModel: ModelManagerViewModel
+) {
+    var currentScreen by remember { mutableStateOf<Screen>(Screen.Chat) }
+    var showSettings by remember { mutableStateOf(false) }
+
+    val chatState by chatViewModel.chatState.collectAsState()
+    val modelManagerState by modelManagerViewModel.state.collectAsState()
+
+    when (currentScreen) {
+        Screen.Chat -> {
+            ChatScreen(
+                chatState = chatState,
+                onSendMessage = { message ->
+                    chatViewModel.sendMessage(message)
+                },
+                onClearChat = {
+                    chatViewModel.clearConversation()
+                },
+                onOpenSettings = {
+                    showSettings = true
+                },
+                onOpenModelLibrary = {
+                    currentScreen = Screen.ModelLibrary
+                }
+            )
+        }
+
+        Screen.ModelLibrary -> {
+            ModelLibraryScreen(
+                state = modelManagerState,
+                onRefresh = {
+                    modelManagerViewModel.fetchAvailableModels()
+                    modelManagerViewModel.refreshLocalData()
+                },
+                onDownloadModel = { model ->
+                    modelManagerViewModel.downloadModel(model)
+                },
+                onDownloadAdapter = { adapter ->
+                    modelManagerViewModel.downloadAdapter(adapter)
+                },
+                onDeleteModel = { modelId ->
+                    modelManagerViewModel.deleteModel(modelId)
+                },
+                onDeleteAdapter = { adapterId ->
+                    modelManagerViewModel.deleteAdapter(adapterId)
+                },
+                onLoadModel = { modelId, adapterId ->
+                    chatViewModel.loadModel(modelId, adapterId)
+                    currentScreen = Screen.Chat
+                },
+                onSelectModel = { modelId ->
+                    modelManagerViewModel.fetchAdaptersForModel(modelId)
+                },
+                onBack = {
+                    currentScreen = Screen.Chat
+                }
+            )
+        }
+    }
+
+    // Settings Dialog
+    if (showSettings) {
+        SettingsDialog(
+            temperature = chatState.temperature,
+            maxTokens = chatState.maxTokens,
+            systemPrompt = chatState.systemPrompt,
+            onTemperatureChange = { temp ->
+                chatViewModel.updateSettings(temperature = temp)
+            },
+            onMaxTokensChange = { tokens ->
+                chatViewModel.updateSettings(maxTokens = tokens)
+            },
+            onSystemPromptChange = { prompt ->
+                chatViewModel.updateSettings(systemPrompt = prompt)
+            },
+            onDismiss = {
+                showSettings = false
+            },
+            onSave = {
+                showSettings = false
+            }
+        )
+    }
+}
+
+sealed class Screen {
+    data object Chat : Screen()
+    data object ModelLibrary : Screen()
 }

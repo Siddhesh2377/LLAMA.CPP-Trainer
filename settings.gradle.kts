@@ -23,4 +23,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "Trainer"
-include(":app")
+include(":app", ":lora")

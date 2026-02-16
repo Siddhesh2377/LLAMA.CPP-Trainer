@@ -76,9 +76,7 @@ message(STATUS "QNN CPU Library: ${QNN_CPU_LIB}")
 # ============================================
 # LLAMA.CPP - BUILD AS SUBDIRECTORY
 # ============================================
-# Vulkan GPU: builds and loads on Adreno but crashes during training backward pass
-# (ErrorDeviceLost — Adreno driver can't handle backward graph ops)
-# Keep OFF for training. Can enable for inference-only use later.
+# Inference-only build configuration
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(GGML_CUDA OFF CACHE BOOL "" FORCE)
 set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
@@ -94,7 +92,7 @@ set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 set(GGML_OPENMP ON CACHE BOOL "" FORCE)            # Parallel threading via NDK's libomp
 set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)         # Conflicts with dotprod/i8mm
 set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)      # Requires CMake 3.24+ for FetchContent URL fix
-set(GGML_CPU_REPACK OFF CACHE BOOL "" FORCE)        # Incompatible with training backward pass
+set(GGML_CPU_REPACK OFF CACHE BOOL "" FORCE)        # Keep OFF for stability
 set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod" CACHE STRING "" FORCE)  # NEON + dotprod (most modern phones)
 
 # Don't build examples/tests/tools - just the library
@@ -135,12 +133,12 @@ target_link_libraries(npu_test
 )
 
 # ============================================
-# JNI LIBRARY - QNN (existing)
+# JNI LIBRARY - Inference only
 # ============================================
 add_library(${CMAKE_PROJECT_NAME} SHARED
     lora.cpp
     lora_graph_builder.cpp
-    lora_train.cpp
+    lora_inference.cpp
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE

@@ -5,20 +5,58 @@ import android.util.Log
 import com.dark.trainer.data.SupabaseClient
 import com.dark.trainer.models.Adapter
 import com.dark.trainer.models.AdapterDeployment
+import com.dark.trainer.models.LocalAdapter
 import com.dark.trainer.models.UpdateLog
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.storage.storage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.URL
 import java.security.MessageDigest
 import androidx.core.content.edit
+import java.util.zip.GZIPInputStream
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 
 class AdapterRepository(private val context: Context) {
 
     private val supabase = SupabaseClient.client
+    private val modelRepository = ModelRepository(context)
+
+    /**
+     * Fetch available adapters for a specific base model from Supabase
+     */
+    suspend fun fetchAdaptersForModel(baseModelId: String): List<Adapter> = withContext(Dispatchers.IO) {
+        try {
+            supabase.from("adapters").select {
+                filter {
+                    eq("base_model_id", baseModelId)
+                    eq("is_published", true)
+                }
+            }.decodeList<Adapter>()
+        } catch (e: Exception) {
+            Log.e("AdapterRepository", "Failed to fetch adapters: ${e.message}", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * Fetch all available adapters from Supabase
+     */
+    suspend fun fetchAllAdapters(): List<Adapter> = withContext(Dispatchers.IO) {
+        try {
+            supabase.from("adapters").select {
+                filter {
+                    eq("is_published", true)
+                }
+            }.decodeList<Adapter>()
+        } catch (e: Exception) {
+            Log.e("AdapterRepository", "Failed to fetch adapters: ${e.message}", e)
+            emptyList()
+        }
+    }
 
     /**
      * Check for available adapter updates
@@ -52,10 +90,11 @@ class AdapterRepository(private val context: Context) {
     }
 
     /**
-     * Download adapter from Supabase Storage
+     * Download adapter from Supabase Storage and extract it
      */
     suspend fun downloadAdapter(
-        adapter: Adapter, onProgress: (Int) -> Unit = {}
+        adapter: Adapter,
+        onProgress: (Int) -> Unit = {}
     ): File = withContext(Dispatchers.IO) {
 
         val bucket = supabase.storage.from("adapters")
@@ -63,7 +102,7 @@ class AdapterRepository(private val context: Context) {
         // Get public URL
         val downloadUrl = bucket.publicUrl(adapter.storagePath)
 
-        // Download to app's cache directory
+        // Download to app's cache directory first
         val localFile = File(
             context.cacheDir, "adapters/${adapter.domain}/${adapter.version}.tar.gz"
         )
@@ -98,7 +137,64 @@ class AdapterRepository(private val context: Context) {
             }
         }
 
-        localFile
+        // Extract tar.gz to proper location
+        val localModel = modelRepository.getLocalModels()
+            .find { it.baseModelId == adapter.baseModelId }
+            ?: throw IllegalStateException("Base model not downloaded for adapter: ${adapter.name}")
+
+        val modelDir = File(localModel.localPath).parentFile
+            ?: throw IllegalStateException("Invalid model path")
+
+        val extractDir = File(modelDir, "adapters/${adapter.domain}")
+        extractDir.mkdirs()
+
+        extractTarGz(localFile, extractDir)
+
+        // Clean up downloaded tar.gz
+        localFile.delete()
+
+        // Save to local tracking
+        modelRepository.saveLocalAdapter(
+            LocalAdapter(
+                adapterId = adapter.id,
+                baseModelId = adapter.baseModelId,
+                adapterName = adapter.name,
+                domain = adapter.domain,
+                localPath = extractDir.absolutePath,
+                sizeBytes = extractDir.walkTopDown().filter { it.isFile }.map { it.length() }.sum()
+            )
+        )
+
+        extractDir
+    }
+
+    /**
+     * Extract tar.gz archive
+     */
+    private fun extractTarGz(tarGzFile: File, outputDir: File) {
+        GZIPInputStream(FileInputStream(tarGzFile)).use { gzipIn ->
+            TarArchiveInputStream(gzipIn).use { tarIn ->
+                var entry = tarIn.nextEntry
+                while (entry != null) {
+                    if (!tarIn.canReadEntryData(entry)) {
+                        Log.w("AdapterRepository", "Cannot read entry: ${entry.name}")
+                        entry = tarIn.nextEntry
+                        continue
+                    }
+
+                    val outputFile = File(outputDir, entry.name)
+                    if (entry.isDirectory) {
+                        outputFile.mkdirs()
+                    } else {
+                        outputFile.parentFile?.mkdirs()
+                        FileOutputStream(outputFile).use { output ->
+                            tarIn.copyTo(output)
+                        }
+                    }
+                    entry = tarIn.nextEntry
+                }
+            }
+        }
     }
 
     /**

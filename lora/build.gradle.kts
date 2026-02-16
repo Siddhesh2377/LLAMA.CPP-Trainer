@@ -26,7 +26,7 @@ android {
 
         ndk {
             abiFilters.clear()
-            abiFilters += "arm64-v8a"
+            abiFilters.addAll(listOf("arm64-v8a", "x86_64"))
         }
 
         externalNativeBuild {
