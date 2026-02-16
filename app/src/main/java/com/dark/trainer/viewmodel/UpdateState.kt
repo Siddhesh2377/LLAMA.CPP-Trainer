@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.dark.trainer.models.Adapter
 import com.dark.trainer.repository.AdapterRepository
+import com.dark.trainer.repository.ModelRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -23,6 +24,7 @@ data class UpdateState(
 class AdapterUpdateViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = AdapterRepository(application)
+    private val modelRepository = ModelRepository(application)
 
     private val _updateState = MutableStateFlow(UpdateState())
     val updateState: StateFlow<UpdateState> = _updateState
@@ -41,12 +43,12 @@ class AdapterUpdateViewModel(application: Application) : AndroidViewModel(applic
             _updateState.value = _updateState.value.copy(isChecking = true, error = null)
 
             try {
-                val currentAdapters = repository.getInstalledAdapters()
-                val updates = repository.checkForUpdates(currentAdapters)
+                val localAdapters = modelRepository.getLocalAdapters()
+                val updates = repository.checkForUpdates(localAdapters)
 
                 _updateState.value = _updateState.value.copy(
                     isChecking = false,
-                    updatesAvailable = updates
+                    updatesAvailable = updates.values.toList()
                 )
 
             } catch (e: Exception) {

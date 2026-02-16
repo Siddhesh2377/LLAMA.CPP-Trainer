@@ -115,6 +115,9 @@ android {
     packagingOptions {
         jniLibs {
             useLegacyPackaging = true
+            // When building from source, CMake outputs duplicate liblora.so and libc++_shared.so
+            pickFirsts += "**/liblora.so"
+            pickFirsts += "**/libc++_shared.so"
         }
     }
 

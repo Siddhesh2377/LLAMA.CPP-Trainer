@@ -45,6 +45,15 @@ class LoraJNI {
     external fun loadLoraAdapter(loraPath: String): String
 
     /**
+     * Apply the model's built-in chat template to format messages into a prompt.
+     * @param roles Array of roles ("system", "user", "assistant")
+     * @param contents Array of message contents (parallel to roles)
+     * @param addAssistant Whether to add assistant turn prefix at the end
+     * @return Formatted prompt string, or empty if model has no template
+     */
+    external fun applyChatTemplate(roles: Array<String>, contents: Array<String>, addAssistant: Boolean): String
+
+    /**
      * Generate text from a prompt (non-streaming)
      * @param prompt Input text prompt
      * @param maxTokens Maximum tokens to generate

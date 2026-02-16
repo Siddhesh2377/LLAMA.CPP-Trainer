@@ -317,6 +317,57 @@ Java_com_dark_lora_LoraJNI_loadLoraAdapter(
     return env->NewStringUTF(("LoRA loaded from: " + lora_path).c_str());
 }
 
+// JNI: Apply model's chat template to messages
+// Takes parallel arrays of roles[] and contents[] and returns the formatted prompt.
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dark_lora_LoraJNI_applyChatTemplate(
+        JNIEnv * env, jobject /* this */,
+        jobjectArray jRoles,
+        jobjectArray jContents,
+        jboolean addAssistant) {
+    if (!g_model) {
+        return env->NewStringUTF("");
+    }
+
+    int n_msg = env->GetArrayLength(jRoles);
+
+    // Build llama_chat_message array
+    std::vector<std::string> roles(n_msg), contents(n_msg);
+    std::vector<llama_chat_message> messages(n_msg);
+
+    for (int i = 0; i < n_msg; i++) {
+        auto jr = (jstring) env->GetObjectArrayElement(jRoles, i);
+        auto jc = (jstring) env->GetObjectArrayElement(jContents, i);
+        roles[i] = jstring_to_string(env, jr);
+        contents[i] = jstring_to_string(env, jc);
+        messages[i].role = roles[i].c_str();
+        messages[i].content = contents[i].c_str();
+        env->DeleteLocalRef(jr);
+        env->DeleteLocalRef(jc);
+    }
+
+    // Get model's chat template
+    const char * tmpl = llama_model_chat_template(g_model, nullptr);
+
+    // First call to get required size
+    int32_t needed = llama_chat_apply_template(
+        tmpl, messages.data(), (size_t) n_msg, (bool) addAssistant, nullptr, 0);
+
+    if (needed <= 0) {
+        // Fallback: return empty string, Kotlin side can use its own template
+        return env->NewStringUTF("");
+    }
+
+    // Allocate and format
+    std::vector<char> buf(needed + 1);
+    llama_chat_apply_template(
+        tmpl, messages.data(), (size_t) n_msg, (bool) addAssistant, buf.data(), (int32_t) buf.size());
+    buf[needed] = '\0';
+
+    return env->NewStringUTF(buf.data());
+}
+
 // JNI: Generate text (inference)
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -336,8 +387,8 @@ Java_com_dark_lora_LoraJNI_generate(
     // Clear KV cache for fresh generation
     llama_memory_clear(llama_get_memory(g_context), true);
 
-    // Tokenize prompt
-    std::vector<llama_token> tokens = common_tokenize(g_context, prompt, true);
+    // Tokenize prompt (parse_special=true so <|im_start|> etc. become single special tokens)
+    std::vector<llama_token> tokens = common_tokenize(g_context, prompt, true, true);
     ui_log("Prompt tokens: %zu", tokens.size());
 
     if (tokens.empty()) {
@@ -479,8 +530,8 @@ Java_com_dark_lora_LoraJNI_generateStreaming(
     // Clear KV cache for fresh generation
     llama_memory_clear(llama_get_memory(g_context), true);
 
-    // Tokenize prompt
-    std::vector<llama_token> tokens = common_tokenize(g_context, prompt, true);
+    // Tokenize prompt (parse_special=true so <|im_start|> etc. become single special tokens)
+    std::vector<llama_token> tokens = common_tokenize(g_context, prompt, true, true);
     ui_log("Prompt tokens: %zu", tokens.size());
 
     if (tokens.empty()) {

@@ -224,11 +224,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 )
 
-                // Build prompt with conversation history
-                val prompt = buildPrompt(
-                    systemPrompt = _chatState.value.systemPrompt,
-                    messages = updatedMessages
-                )
+                // Build prompt using model's chat template
+                val allMessages = listOf(
+                    ChatMessage(role = ChatRole.SYSTEM, content = _chatState.value.systemPrompt)
+                ) + updatedMessages
+
+                val roles = allMessages.map { it.role.name.lowercase() }.toTypedArray()
+                val contents = allMessages.map { it.content }.toTypedArray()
+
+                var prompt = loraJNI.applyChatTemplate(roles, contents, true)
+
+                // Fallback to ChatML if model has no built-in template
+                if (prompt.isEmpty()) {
+                    prompt = buildPrompt(
+                        systemPrompt = _chatState.value.systemPrompt,
+                        messages = updatedMessages
+                    )
+                }
 
                 // Generate response using streaming
                 streamingBuffer.clear()

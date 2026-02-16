@@ -32,13 +32,30 @@ android {
         buildConfigField("String", "SUPABASE_KEY", "\"${localProperties.getProperty("supabase.key", "")}\"")
     }
 
+    signingConfigs {
+        create("release") {
+            val ksFile = localProperties.getProperty("release.keystore.file") ?: ""
+            if (ksFile.isNotEmpty()) {
+                storeFile = file(ksFile)
+                storePassword = localProperties.getProperty("release.keystore.password", "")
+                keyAlias = localProperties.getProperty("release.key.alias", "")
+                keyPassword = localProperties.getProperty("release.key.password", "")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            val ksFile = localProperties.getProperty("release.keystore.file") ?: ""
+            if (ksFile.isNotEmpty()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {

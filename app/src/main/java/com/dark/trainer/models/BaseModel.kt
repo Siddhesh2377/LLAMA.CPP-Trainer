@@ -75,6 +75,7 @@ data class LocalAdapter(
     val baseModelId: String,
     val adapterName: String,
     val domain: String,
+    val version: String = "",
     val localPath: String,
     val downloadedAt: Long = System.currentTimeMillis(),
     val sizeBytes: Long = 0

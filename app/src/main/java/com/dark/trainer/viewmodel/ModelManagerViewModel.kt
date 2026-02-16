@@ -19,6 +19,7 @@ data class ModelManagerState(
     val availableAdapters: List<Adapter> = emptyList(),
     val localModels: List<LocalModel> = emptyList(),
     val localAdapters: List<LocalAdapter> = emptyList(),
+    val adapterUpdates: Map<String, Adapter> = emptyMap(),
     val selectedModelId: String? = null,
     val isLoading: Boolean = false,
     val isDownloading: Boolean = false,
@@ -211,7 +212,7 @@ class ModelManagerViewModel(application: Application) : AndroidViewModel(applica
     }
 
     /**
-     * Refresh local model/adapter data
+     * Refresh local model/adapter data and check for updates
      */
     fun refreshLocalData() {
         val localModels = modelRepository.getLocalModels()
@@ -221,6 +222,69 @@ class ModelManagerViewModel(application: Application) : AndroidViewModel(applica
             localModels = localModels,
             localAdapters = localAdapters
         )
+
+        // Check for adapter updates in background
+        checkForAdapterUpdates(localAdapters)
+    }
+
+    /**
+     * Check if any local adapters have newer versions available on server
+     */
+    private fun checkForAdapterUpdates(localAdapters: List<LocalAdapter> = _state.value.localAdapters) {
+        if (localAdapters.isEmpty()) return
+
+        viewModelScope.launch {
+            try {
+                val updates = adapterRepository.checkForUpdates(localAdapters)
+                _state.value = _state.value.copy(adapterUpdates = updates)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to check for adapter updates: ${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * Update a local adapter to a newer remote version
+     */
+    fun updateAdapter(localAdapterId: String, remoteAdapter: Adapter) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(
+                isDownloading = true,
+                downloadProgress = 0,
+                downloadingItemId = localAdapterId,
+                error = null
+            )
+
+            try {
+                // Delete old adapter files
+                modelRepository.deleteAdapter(localAdapterId)
+
+                // Download the new version
+                adapterRepository.downloadAdapter(remoteAdapter) { progress ->
+                    _state.value = _state.value.copy(downloadProgress = progress)
+                }
+
+                // Refresh local data (also re-checks for updates)
+                refreshLocalData()
+
+                _state.value = _state.value.copy(
+                    isDownloading = false,
+                    downloadProgress = 0,
+                    downloadingItemId = null
+                )
+
+                Log.i(TAG, "Adapter updated: ${remoteAdapter.name} v${remoteAdapter.version}")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to update adapter: ${e.message}", e)
+                _state.value = _state.value.copy(
+                    isDownloading = false,
+                    downloadProgress = 0,
+                    downloadingItemId = null,
+                    error = "Failed to update adapter: ${e.message}"
+                )
+            }
+        }
     }
 
     /**

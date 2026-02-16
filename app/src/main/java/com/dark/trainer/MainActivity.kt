@@ -77,6 +77,9 @@ fun AppContent(
                 onDownloadAdapter = { adapter ->
                     modelManagerViewModel.downloadAdapter(adapter)
                 },
+                onUpdateAdapter = { localAdapterId, remoteAdapter ->
+                    modelManagerViewModel.updateAdapter(localAdapterId, remoteAdapter)
+                },
                 onDeleteModel = { modelId ->
                     modelManagerViewModel.deleteModel(modelId)
                 },

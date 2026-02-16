@@ -59,11 +59,13 @@ class AdapterRepository(private val context: Context) {
     }
 
     /**
-     * Check for available adapter updates
+     * Check for available adapter updates based on locally installed adapters.
+     * Returns a map of localAdapterId -> newer remote Adapter.
      */
     suspend fun checkForUpdates(
-        currentAdapters: Map<String, String> // domain -> version
-    ): List<Adapter> = withContext(Dispatchers.IO) {
+        localAdapters: List<LocalAdapter>
+    ): Map<String, Adapter> = withContext(Dispatchers.IO) {
+        if (localAdapters.isEmpty()) return@withContext emptyMap()
 
         // 1. Fetch all active deployments
         val deployments = supabase.from("adapter_deployments").select {
@@ -73,20 +75,43 @@ class AdapterRepository(private val context: Context) {
             }.decodeList<AdapterDeployment>()
 
         val adapterIds = deployments.map { it.adapterId }
+        if (adapterIds.isEmpty()) return@withContext emptyMap()
 
         // 2. Fetch corresponding adapters
-        val adapters = supabase.from("adapters").select {
+        val remoteAdapters = supabase.from("adapters").select {
                 filter {
                     isIn("id", adapterIds)
                     eq("is_published", true)
                 }
             }.decodeList<Adapter>()
 
-        // 3. Filter updates needed
-        adapters.filter { adapter ->
-            val currentVersion = currentAdapters[adapter.domain] ?: "0.0.0"
-            adapter.version > currentVersion
+        // 3. For each local adapter, find if a newer version exists
+        val updates = mutableMapOf<String, Adapter>()
+        for (local in localAdapters) {
+            val newer = remoteAdapters
+                .filter { it.baseModelId == local.baseModelId && it.domain == local.domain }
+                .filter { isNewerVersion(it.version, local.version) }
+                .maxByOrNull { it.version }
+            if (newer != null) {
+                updates[local.adapterId] = newer
+            }
         }
+        updates
+    }
+
+    /**
+     * Compare semantic versions. Returns true if remote > local.
+     */
+    private fun isNewerVersion(remote: String, local: String): Boolean {
+        if (local.isBlank()) return true
+        val r = remote.split(".").map { it.toIntOrNull() ?: 0 }
+        val l = local.split(".").map { it.toIntOrNull() ?: 0 }
+        for (i in 0 until maxOf(r.size, l.size)) {
+            val rv = r.getOrElse(i) { 0 }
+            val lv = l.getOrElse(i) { 0 }
+            if (rv != lv) return rv > lv
+        }
+        return false
     }
 
     /**
@@ -160,6 +185,7 @@ class AdapterRepository(private val context: Context) {
                 baseModelId = adapter.baseModelId,
                 adapterName = adapter.name,
                 domain = adapter.domain,
+                version = adapter.version,
                 localPath = extractDir.absolutePath,
                 sizeBytes = extractDir.walkTopDown().filter { it.isFile }.map { it.length() }.sum()
             )

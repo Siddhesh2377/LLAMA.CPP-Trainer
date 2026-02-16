@@ -24,6 +24,7 @@ fun ModelLibraryScreen(
     onRefresh: () -> Unit,
     onDownloadModel: (BaseModel) -> Unit,
     onDownloadAdapter: (Adapter) -> Unit,
+    onUpdateAdapter: (String, Adapter) -> Unit,
     onDeleteModel: (String) -> Unit,
     onDeleteAdapter: (String) -> Unit,
     onLoadModel: (String, String?) -> Unit,
@@ -79,9 +80,14 @@ fun ModelLibraryScreen(
                 0 -> DownloadedTab(
                     localModels = state.localModels,
                     localAdapters = state.localAdapters,
+                    adapterUpdates = state.adapterUpdates,
+                    isDownloading = state.isDownloading,
+                    downloadingItemId = state.downloadingItemId,
+                    downloadProgress = state.downloadProgress,
                     onDeleteModel = onDeleteModel,
                     onDeleteAdapter = onDeleteAdapter,
-                    onLoadModel = onLoadModel
+                    onLoadModel = onLoadModel,
+                    onUpdateAdapter = onUpdateAdapter
                 )
 
                 1 -> AvailableModelsTab(
@@ -97,11 +103,13 @@ fun ModelLibraryScreen(
                 2 -> AvailableAdaptersTab(
                     adapters = state.availableAdapters,
                     localAdapters = state.localAdapters,
+                    adapterUpdates = state.adapterUpdates,
                     selectedModelId = state.selectedModelId,
                     isDownloading = state.isDownloading,
                     downloadProgress = state.downloadProgress,
                     downloadingItemId = state.downloadingItemId,
-                    onDownload = onDownloadAdapter
+                    onDownload = onDownloadAdapter,
+                    onUpdateAdapter = onUpdateAdapter
                 )
             }
 
@@ -121,9 +129,14 @@ fun ModelLibraryScreen(
 fun DownloadedTab(
     localModels: List<LocalModel>,
     localAdapters: List<LocalAdapter>,
+    adapterUpdates: Map<String, Adapter>,
+    isDownloading: Boolean,
+    downloadingItemId: String?,
+    downloadProgress: Int,
     onDeleteModel: (String) -> Unit,
     onDeleteAdapter: (String) -> Unit,
-    onLoadModel: (String, String?) -> Unit
+    onLoadModel: (String, String?) -> Unit,
+    onUpdateAdapter: (String, Adapter) -> Unit
 ) {
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
@@ -168,8 +181,13 @@ fun DownloadedTab(
             LocalModelCard(
                 model = model,
                 adapters = localAdapters.filter { it.baseModelId == model.baseModelId },
+                adapterUpdates = adapterUpdates,
+                isDownloading = isDownloading,
+                downloadingItemId = downloadingItemId,
+                downloadProgress = downloadProgress,
                 onDelete = { onDeleteModel(model.baseModelId) },
-                onLoad = { adapterId -> onLoadModel(model.baseModelId, adapterId) }
+                onLoad = { adapterId -> onLoadModel(model.baseModelId, adapterId) },
+                onUpdateAdapter = onUpdateAdapter
             )
         }
     }
@@ -179,11 +197,18 @@ fun DownloadedTab(
 fun LocalModelCard(
     model: LocalModel,
     adapters: List<LocalAdapter>,
+    adapterUpdates: Map<String, Adapter>,
+    isDownloading: Boolean,
+    downloadingItemId: String?,
+    downloadProgress: Int,
     onDelete: () -> Unit,
-    onLoad: (String?) -> Unit
+    onLoad: (String?) -> Unit,
+    onUpdateAdapter: (String, Adapter) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+
+    val updatesForModel = adapters.count { adapterUpdates.containsKey(it.adapterId) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -198,11 +223,19 @@ fun LocalModelCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        model.modelName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            model.modelName,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (updatesForModel > 0) {
+                            Spacer(Modifier.width(8.dp))
+                            Badge {
+                                Text("$updatesForModel")
+                            }
+                        }
+                    }
                     Text(
                         "${model.sizeBytes / 1024 / 1024} MB",
                         style = MaterialTheme.typography.bodySmall,
@@ -243,6 +276,9 @@ fun LocalModelCard(
                 Spacer(Modifier.height(8.dp))
 
                 adapters.forEach { adapter ->
+                    val updateAvailable = adapterUpdates[adapter.adapterId]
+                    val isUpdatingThis = downloadingItemId == adapter.adapterId
+
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -250,30 +286,75 @@ fun LocalModelCard(
                         shape = MaterialTheme.shapes.small,
                         color = MaterialTheme.colorScheme.surface
                     ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    adapter.adapterName,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    adapter.domain,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        adapter.adapterName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            adapter.domain,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        if (adapter.version.isNotBlank()) {
+                                            Text(
+                                                "v${adapter.version}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (updateAvailable != null && !isUpdatingThis) {
+                                        Button(
+                                            onClick = { onUpdateAdapter(adapter.adapterId, updateAvailable) },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = MaterialTheme.colorScheme.tertiary
+                                            ),
+                                            modifier = Modifier.height(36.dp),
+                                            contentPadding = PaddingValues(horizontal = 12.dp)
+                                        ) {
+                                            Icon(Icons.Default.Refresh, null, Modifier.size(16.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("v${updateAvailable.version}", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
+
+                                    Button(
+                                        onClick = { onLoad(adapter.adapterId) },
+                                        modifier = Modifier.size(width = 80.dp, height = 36.dp),
+                                        contentPadding = PaddingValues(0.dp),
+                                        enabled = !isUpdatingThis
+                                    ) {
+                                        Text("Load", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
                             }
 
-                            Button(
-                                onClick = { onLoad(adapter.adapterId) },
-                                modifier = Modifier.size(width = 80.dp, height = 36.dp),
-                                contentPadding = PaddingValues(0.dp)
-                            ) {
-                                Text("Load", style = MaterialTheme.typography.labelSmall)
+                            if (isUpdatingThis && isDownloading) {
+                                Spacer(Modifier.height(8.dp))
+                                LinearProgressIndicator(
+                                    progress = { downloadProgress / 100f },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Text(
+                                    "Updating... $downloadProgress%",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
                             }
                         }
                     }
@@ -442,11 +523,13 @@ fun BaseModelCard(
 fun AvailableAdaptersTab(
     adapters: List<Adapter>,
     localAdapters: List<LocalAdapter>,
+    adapterUpdates: Map<String, Adapter>,
     selectedModelId: String?,
     isDownloading: Boolean,
     downloadProgress: Int,
     downloadingItemId: String?,
-    onDownload: (Adapter) -> Unit
+    onDownload: (Adapter) -> Unit,
+    onUpdateAdapter: (String, Adapter) -> Unit
 ) {
     if (selectedModelId == null) {
         Box(
@@ -506,15 +589,24 @@ fun AvailableAdaptersTab(
         }
 
         items(adapters) { adapter ->
-            val isDownloaded = localAdapters.any { it.adapterId == adapter.id }
+            val localAdapter = localAdapters.find { it.adapterId == adapter.id }
+            val isDownloaded = localAdapter != null
             val isDownloadingThis = downloadingItemId == adapter.id
+            // Check if this remote adapter is an update for any local adapter
+            val updatableLocalId = if (isDownloaded) null else {
+                adapterUpdates.entries.find { it.value.id == adapter.id }?.key
+            }
 
             AdapterCard(
                 adapter = adapter,
                 isDownloaded = isDownloaded,
+                hasUpdate = updatableLocalId != null,
                 isDownloading = isDownloadingThis,
                 downloadProgress = if (isDownloadingThis) downloadProgress else 0,
-                onDownload = { onDownload(adapter) }
+                onDownload = { onDownload(adapter) },
+                onUpdate = {
+                    updatableLocalId?.let { localId -> onUpdateAdapter(localId, adapter) }
+                }
             )
         }
     }
@@ -524,9 +616,11 @@ fun AvailableAdaptersTab(
 fun AdapterCard(
     adapter: Adapter,
     isDownloaded: Boolean,
+    hasUpdate: Boolean = false,
     isDownloading: Boolean,
     downloadProgress: Int,
-    onDownload: () -> Unit
+    onDownload: () -> Unit,
+    onUpdate: () -> Unit = {}
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -578,6 +672,18 @@ fun AdapterCard(
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 4.dp)
                 )
+            } else if (hasUpdate) {
+                Button(
+                    onClick = onUpdate,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.tertiary
+                    )
+                ) {
+                    Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Update to v${adapter.version}")
+                }
             } else if (!isDownloaded) {
                 Button(
                     onClick = onDownload,

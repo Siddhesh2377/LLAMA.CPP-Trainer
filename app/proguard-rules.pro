@@ -1,21 +1,31 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# ── JNI ──────────────────────────────────────────────────────────────
+# Keep LoraJNI and its callback interfaces (called from native C++)
+-keep class com.dark.lora.LoraJNI { *; }
+-keep class com.dark.lora.LoraJNI$LogCallback { *; }
+-keep class com.dark.lora.LoraJNI$StreamCallback { *; }
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# ── Kotlinx Serialization ───────────────────────────────────────────
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.**
+-keepclassmembers class kotlinx.serialization.json.** { *** Companion; }
+-keepclasseswithmembers class kotlinx.serialization.json.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+-keep,includedescriptorclasses class com.dark.trainer.models.** { *; }
+-keepclassmembers class com.dark.trainer.models.** {
+    *** Companion;
+    kotlinx.serialization.KSerializer serializer(...);
+}
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# ── Supabase / Ktor ─────────────────────────────────────────────────
+-keep class io.github.jan.supabase.** { *; }
+-keep class io.ktor.** { *; }
+-dontwarn io.ktor.**
+-dontwarn org.slf4j.**
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# ── Compose (handled by default rules, but keep ViewModel factories) ─
+-keep class * extends androidx.lifecycle.ViewModel { <init>(...); }
+
+# ── Debug info ──────────────────────────────────────────────────────
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
