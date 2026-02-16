@@ -4,6 +4,15 @@ plugins {
     alias(libs.plugins.android.library)
 }
 
+val localProperties = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) load(f.inputStream())
+}
+
+val llamaCppDir: String? = localProperties.getProperty("llama.cpp.dir")
+    ?: System.getenv("LLAMA_CPP_DIR")
+val buildFromSource = llamaCppDir != null
+
 android {
     namespace = "com.dark.lora"
     compileSdk {
@@ -29,52 +38,46 @@ android {
             abiFilters.addAll(listOf("arm64-v8a"))
         }
 
-        externalNativeBuild {
-            cmake {
-                val localProperties = Properties()
-                val localPropertiesFile = rootProject.file("local.properties")
-                if (localPropertiesFile.exists()) {
-                    localProperties.load(localPropertiesFile.inputStream())
+        if (buildFromSource) {
+            externalNativeBuild {
+                cmake {
+                    val qnnSdkDir = localProperties.getProperty("qnn.sdk.dir")
+                        ?: System.getenv("QNN_SDK_DIR")
+                        ?: ""
+
+                    val hexagonSdkDir = localProperties.getProperty("hexagon.sdk.dir")
+                        ?: System.getenv("HEXAGON_SDK_ROOT")
+                        ?: ""
+
+                    val hexagonToolsDir = localProperties.getProperty("hexagon.tools.dir")
+                        ?: System.getenv("HEXAGON_TOOLS_ROOT")
+                        ?: ""
+
+                    val enableHexagon = hexagonSdkDir.isNotEmpty() && hexagonToolsDir.isNotEmpty()
+
+                    val cmakeArgs = mutableListOf(
+                        "-DANDROID_STL=c++_shared",
+                        "-DLLAMA_CPP_DIR=$llamaCppDir"
+                    )
+
+                    if (qnnSdkDir.isNotEmpty()) {
+                        cmakeArgs.add("-DQNN_SDK_DIR=$qnnSdkDir")
+                    }
+
+                    if (enableHexagon) {
+                        cmakeArgs.addAll(listOf(
+                            "-DHEXAGON_SDK_ROOT=$hexagonSdkDir",
+                            "-DHEXAGON_TOOLS_ROOT=$hexagonToolsDir",
+                            "-DGGML_HEXAGON=ON"
+                        ))
+                    }
+
+                    arguments(*cmakeArgs.toTypedArray())
+
+                    cppFlags("-std=c++17", "-fexceptions", "-frtti")
+
+                    targets("lora")
                 }
-
-                val qnnSdkDir = localProperties.getProperty("qnn.sdk.dir")
-                    ?: System.getenv("QNN_SDK_DIR")
-                    ?: error("QNN_SDK_DIR not found!")
-
-                val llamaCppDir = localProperties.getProperty("llama.cpp.dir")
-                    ?: System.getenv("LLAMA_CPP_DIR")
-                    ?: error("LLAMA_CPP_DIR not found! Add llama.cpp.dir to local.properties")
-
-                val hexagonSdkDir = localProperties.getProperty("hexagon.sdk.dir")
-                    ?: System.getenv("HEXAGON_SDK_ROOT")
-                    ?: ""
-
-                val hexagonToolsDir = localProperties.getProperty("hexagon.tools.dir")
-                    ?: System.getenv("HEXAGON_TOOLS_ROOT")
-                    ?: ""
-
-                val enableHexagon = hexagonSdkDir.isNotEmpty() && hexagonToolsDir.isNotEmpty()
-
-                val cmakeArgs = mutableListOf(
-                    "-DANDROID_STL=c++_shared",
-                    "-DQNN_SDK_DIR=$qnnSdkDir",
-                    "-DLLAMA_CPP_DIR=$llamaCppDir"
-                )
-
-                if (enableHexagon) {
-                    cmakeArgs.addAll(listOf(
-                        "-DHEXAGON_SDK_ROOT=$hexagonSdkDir",
-                        "-DHEXAGON_TOOLS_ROOT=$hexagonToolsDir",
-                        "-DGGML_HEXAGON=ON"
-                    ))
-                }
-
-                arguments(*cmakeArgs.toTypedArray())
-
-                cppFlags("-std=c++17", "-fexceptions", "-frtti")
-
-                // Exclude npu_test from CMake's automatic library packaging
-                targets("lora")  // Only build the lora library target
             }
         }
     }
@@ -89,10 +92,12 @@ android {
         }
     }
 
-    externalNativeBuild {
-        cmake {
-            path("src/main/cpp/CMakeLists.txt")
-            version = "3.31.4"
+    if (buildFromSource) {
+        externalNativeBuild {
+            cmake {
+                path("src/main/cpp/CMakeLists.txt")
+                version = "3.31.4"
+            }
         }
     }
 
@@ -110,13 +115,6 @@ android {
     packagingOptions {
         jniLibs {
             useLegacyPackaging = true
-        }
-
-        // Exclude the CMake-built executable from packaging
-        resources {
-            excludes += listOf(
-                "**/libnpu_test_exec.so"
-            )
         }
     }
 
