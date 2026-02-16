@@ -5,6 +5,7 @@
 #include <cstring>
 #include <unistd.h>
 #include <mutex>
+#include <chrono>
 
 #include "llama.h"
 #include "common.h"
@@ -29,6 +30,44 @@ static jmethodID   g_on_complete     = nullptr;
 static jmethodID   g_on_error        = nullptr;
 static std::mutex  g_stream_mutex;
 
+// Helper: Trim trailing incomplete UTF-8 multi-byte sequence (for streaming tokens).
+static int utf8_complete_len(const char * buf, int len) {
+    if (len <= 0) return 0;
+    int i = len - 1;
+    while (i >= 0 && ((unsigned char)buf[i] & 0xC0) == 0x80) i--;
+    if (i < 0) return 0;
+    unsigned char lead = (unsigned char)buf[i];
+    int expected;
+    if ((lead & 0x80) == 0)         expected = 1;
+    else if ((lead & 0xE0) == 0xC0) expected = 2;
+    else if ((lead & 0xF0) == 0xE0) expected = 3;
+    else if ((lead & 0xF8) == 0xF0) expected = 4;
+    else return i;
+    if ((len - i) >= expected) return len;
+    return i;
+}
+
+// Helper: Sanitize a string in-place for JNI NewStringUTF.
+// Replaces invalid/incomplete UTF-8 sequences with '?' anywhere in the string.
+static void utf8_sanitize(char * buf) {
+    unsigned char * p = (unsigned char *)buf;
+    while (*p) {
+        if (*p < 0x80) { p++; continue; } // ASCII
+        int expected;
+        if ((*p & 0xE0) == 0xC0)      expected = 2;
+        else if ((*p & 0xF0) == 0xE0) expected = 3;
+        else if ((*p & 0xF8) == 0xF0) expected = 4;
+        else { *p = '?'; p++; continue; } // invalid lead byte
+        // Check continuation bytes
+        bool valid = true;
+        for (int j = 1; j < expected; j++) {
+            if ((p[j] & 0xC0) != 0x80) { valid = false; break; }
+        }
+        if (valid) { p += expected; }
+        else { *p = '?'; p++; } // replace bad lead, re-scan from next byte
+    }
+}
+
 // Send a log message to Kotlin UI (thread-safe)
 static void ui_log(const char * fmt, ...) {
     char buf[1024];
@@ -52,6 +91,8 @@ static void ui_log(const char * fmt, ...) {
         attached = true;
     }
     if (env) {
+        // Sanitize: llama.cpp can truncate strings mid-UTF-8 character (e.g. tokenizer merges)
+        utf8_sanitize(buf);
         jstring jmsg = env->NewStringUTF(buf);
         env->CallVoidMethod(g_log_callback, g_on_log, jmsg);
         env->DeleteLocalRef(jmsg);
@@ -152,11 +193,19 @@ Java_com_dark_lora_LoraJNI_initLlamaBackend(
     std::string native_lib_dir = jstring_to_string(env, jNativeLibDir);
     ui_log("Loading backends from: %s", native_lib_dir.c_str());
 
+    // Set ADSP_LIBRARY_PATH so FastRPC can find HTP skel libraries (libggml-htp-vXX.so)
+    // Must be set BEFORE backend initialization
+    setenv("ADSP_LIBRARY_PATH", native_lib_dir.c_str(), 1);
+    ui_log("ADSP_LIBRARY_PATH set to: %s", native_lib_dir.c_str());
+
+    // Enable Hexagon experimental ops (flash attention on HTP)
+    setenv("GGML_HEXAGON_EXPERIMENTAL", "1", 1);
+
     ggml_backend_load_all_from_path(native_lib_dir.c_str());
     llama_backend_init();
 
     g_backend_initialized = true;
-    ui_log("Backend initialized (CPU)");
+    ui_log("Backend initialized");
     return JNI_TRUE;
 }
 
@@ -167,7 +216,8 @@ Java_com_dark_lora_LoraJNI_loadModel(
         JNIEnv * env, jobject /* this */,
         jstring jModelPath,
         jint nThreads,
-        jint nCtx) {
+        jint nCtx,
+        jint nGpuLayers) {
     if (!g_backend_initialized) {
         return env->NewStringUTF("ERROR: Backend not initialized");
     }
@@ -181,7 +231,11 @@ Java_com_dark_lora_LoraJNI_loadModel(
 
     llama_model_params model_params = llama_model_default_params();
     model_params.use_mmap = false; // Load into RAM — avoids mmap page-fault stalls on Android
-    ui_log("use_mmap=false (full RAM load)");
+
+    // Offload layers to NPU (Hexagon HTP) if available
+    int n_gpu = (nGpuLayers >= 0) ? nGpuLayers : 99;
+    model_params.n_gpu_layers = n_gpu;
+    ui_log("use_mmap=false, n_gpu_layers=%d", n_gpu);
 
     g_model = llama_model_load_from_file(model_path.c_str(), model_params);
     if (!g_model) {
@@ -202,6 +256,11 @@ Java_com_dark_lora_LoraJNI_loadModel(
     ctx_params.n_ubatch     = 256;
     ctx_params.n_threads       = n_threads_actual;
     ctx_params.n_threads_batch = n_threads_actual;
+    // Only enable flash attention when using HTP (reduces graph splits on NPU)
+    // For CPU-only, the standard attention path is faster
+    if (n_gpu > 0) {
+        ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+    }
 
     g_context = llama_init_from_model(g_model, ctx_params);
     if (!g_context) {
@@ -309,26 +368,51 @@ Java_com_dark_lora_LoraJNI_generate(
         return env->NewStringUTF("ERROR: Failed to decode prompt");
     }
 
+    // Stop strings for text-based detection (catches multi-token BPE sequences)
+    const char * stop_strs[] = {
+        "<|im_end|>", "<|im_start|>",           // ChatML
+        "<|eot_id|>", "<|start_header_id|>",    // Llama 3
+        "<end_of_turn>", "<start_of_turn>",      // Gemma
+        "<|end|>", "<|user|>", "<|assistant|>",  // Phi
+        nullptr
+    };
+
     // Generate tokens
     const llama_vocab * vocab = llama_model_get_vocab(g_model);
     std::string result;
     int n_generated = 0;
     int max_gen = (maxTokens > 0) ? maxTokens : 128;
 
+    auto t_start = std::chrono::steady_clock::now();
+
     for (int i = 0; i < max_gen; i++) {
         llama_token new_token = llama_sampler_sample(smpl, g_context, -1);
 
         if (llama_vocab_is_eog(vocab, new_token)) {
-            ui_log("EOS at token %d", i + 1);
+            ui_log("EOG at token %d", i + 1);
             break;
         }
 
-        // Convert token to text
+        // Convert token to text (special=false: don't render control tokens)
         char piece[256];
-        int n = llama_token_to_piece(vocab, new_token, piece, sizeof(piece), 0, true);
+        int n = llama_token_to_piece(vocab, new_token, piece, sizeof(piece), 0, false);
         if (n > 0) {
             result.append(piece, n);
         }
+
+        // Text-based stop sequence detection
+        bool is_stop = false;
+        for (int s = 0; stop_strs[s]; s++) {
+            size_t stop_len = strlen(stop_strs[s]);
+            if (result.size() >= stop_len &&
+                result.compare(result.size() - stop_len, stop_len, stop_strs[s]) == 0) {
+                result.resize(result.size() - stop_len);
+                ui_log("Stop string '%s' at token %d", stop_strs[s], i + 1);
+                is_stop = true;
+                break;
+            }
+        }
+        if (is_stop) break;
 
         // Decode single token
         batch = llama_batch_get_one(&new_token, 1);
@@ -340,52 +424,16 @@ Java_com_dark_lora_LoraJNI_generate(
     }
 
     llama_sampler_free(smpl);
-    ui_log("Generated %d tokens", n_generated);
+
+    auto t_end = std::chrono::steady_clock::now();
+    double elapsed = std::chrono::duration<double>(t_end - t_start).count();
+    ui_log("Generated %d tokens in %.2fs (%.1f tok/s)", n_generated, elapsed,
+           elapsed > 0 ? n_generated / elapsed : 0.0);
 
     return env->NewStringUTF(result.c_str());
 }
 
-// Helper: Send token to stream callback
-
-static void stream_token(const char * token_text) {
-    std::lock_guard<std::mutex> lock(g_stream_mutex);
-    if (!g_jvm || !g_stream_callback || !g_on_token) return;
-
-    JNIEnv * env = nullptr;
-    bool attached = false;
-    int status = g_jvm->GetEnv((void **)&env, JNI_VERSION_1_6);
-    if (status == JNI_EDETACHED) {
-        g_jvm->AttachCurrentThread(&env, nullptr);
-        attached = true;
-    }
-    if (env) {
-        jstring jtoken = env->NewStringUTF(token_text);
-        env->CallVoidMethod(g_stream_callback, g_on_token, jtoken);
-        env->DeleteLocalRef(jtoken);
-    }
-    if (attached) {
-        g_jvm->DetachCurrentThread();
-    }
-}
-
-static void stream_complete() {
-    std::lock_guard<std::mutex> lock(g_stream_mutex);
-    if (!g_jvm || !g_stream_callback || !g_on_complete) return;
-
-    JNIEnv * env = nullptr;
-    bool attached = false;
-    int status = g_jvm->GetEnv((void **)&env, JNI_VERSION_1_6);
-    if (status == JNI_EDETACHED) {
-        g_jvm->AttachCurrentThread(&env, nullptr);
-        attached = true;
-    }
-    if (env) {
-        env->CallVoidMethod(g_stream_callback, g_on_complete);
-    }
-    if (attached) {
-        g_jvm->DetachCurrentThread();
-    }
-}
+// Helper: Send error to stream callback (thread-safe, for early returns)
 
 static void stream_error(const char * error_msg) {
     std::lock_guard<std::mutex> lock(g_stream_mutex);
@@ -399,7 +447,10 @@ static void stream_error(const char * error_msg) {
         attached = true;
     }
     if (env) {
-        jstring jerror = env->NewStringUTF(error_msg);
+        // Sanitize in case error message contains truncated UTF-8
+        std::string safe_msg(error_msg);
+        utf8_sanitize(&safe_msg[0]);
+        jstring jerror = env->NewStringUTF(safe_msg.c_str());
         env->CallVoidMethod(g_stream_callback, g_on_error, jerror);
         env->DeleteLocalRef(jerror);
     }
@@ -456,6 +507,7 @@ Java_com_dark_lora_LoraJNI_generateStreaming(
     }
 
     // Batched prefill — process prompt in n_batch chunks, logits only on last token
+    auto t_prefill_start = std::chrono::steady_clock::now();
     {
         const int n_batch_size = llama_n_batch(g_context);
         llama_batch batch = llama_batch_init(n_batch_size, 0, 1);
@@ -488,58 +540,96 @@ Java_com_dark_lora_LoraJNI_generateStreaming(
         llama_batch_free(batch);
     }
 
-    ui_log("Prefill done (%zu tokens)", tokens.size());
+    auto t_prefill_end = std::chrono::steady_clock::now();
+    double prefill_s = std::chrono::duration<double>(t_prefill_end - t_prefill_start).count();
+    ui_log("Prefill done: %zu tokens in %.2fs (%.1f tok/s)", tokens.size(), prefill_s,
+           prefill_s > 0 ? tokens.size() / prefill_s : 0.0);
 
-    // Resolve stop tokens — covers ChatML, Llama 3, Gemma, Phi, etc.
+    // Stop strings for text-based detection (catches multi-token BPE sequences)
     const llama_vocab * vocab = llama_model_get_vocab(g_model);
-    std::vector<llama_token> stop_tokens;
-    {
-        const char * stop_strs[] = {
-            "<|im_end|>", "<|im_start|>",           // ChatML
-            "<|eot_id|>", "<|start_header_id|>",    // Llama 3
-            "<end_of_turn>", "<start_of_turn>",      // Gemma
-            "<|end|>", "<|user|>", "<|assistant|>",  // Phi
-            nullptr
-        };
-        for (int s = 0; stop_strs[s]; s++) {
-            auto toks = common_tokenize(g_context, stop_strs[s], false, true);
-            if (toks.size() == 1) {
-                stop_tokens.push_back(toks[0]);
-            }
-        }
-        ui_log("Registered %zu stop tokens", stop_tokens.size());
-    }
+    const char * stop_strs[] = {
+        "<|im_end|>", "<|im_start|>",           // ChatML
+        "<|eot_id|>", "<|start_header_id|>",    // Llama 3
+        "<end_of_turn>", "<start_of_turn>",      // Gemma
+        "<|end|>", "<|user|>", "<|assistant|>",  // Phi
+        nullptr
+    };
 
     // Generate tokens — stream directly via env (no mutex / GetEnv overhead)
+    std::string accumulated;  // Full generated text for stop detection
     int n_generated = 0;
     int max_gen = (maxTokens > 0) ? maxTokens : 128;
+    int n_streamed_chars = 0;  // Characters already sent to UI
+
+    auto t_gen_start = std::chrono::steady_clock::now();
 
     for (int i = 0; i < max_gen; i++) {
         llama_token new_token = llama_sampler_sample(smpl, g_context, -1);
 
-        // Check EOG + explicit stop tokens
+        // Check EOG (single-token stop — catches proper special tokens)
         if (llama_vocab_is_eog(vocab, new_token)) {
             ui_log("EOG at token %d", i + 1);
             break;
         }
+
+        // Convert token to text (special=false: don't render control tokens)
+        char piece[256];
+        int n = llama_token_to_piece(vocab, new_token, piece, sizeof(piece), 0, false);
+        if (n > 0) {
+            accumulated.append(piece, n);
+        }
+
+        // Text-based stop sequence detection (catches multi-token BPE sequences)
         bool is_stop = false;
-        for (auto st : stop_tokens) {
-            if (new_token == st) { is_stop = true; break; }
+        for (int s = 0; stop_strs[s]; s++) {
+            size_t stop_len = strlen(stop_strs[s]);
+            if (accumulated.size() >= stop_len &&
+                accumulated.compare(accumulated.size() - stop_len, stop_len, stop_strs[s]) == 0) {
+                accumulated.resize(accumulated.size() - stop_len);
+                ui_log("Stop string '%s' at token %d", stop_strs[s], i + 1);
+                is_stop = true;
+                break;
+            }
         }
         if (is_stop) {
-            ui_log("Stop token at %d", i + 1);
+            // Flush any remaining un-streamed text before the stop string
+            if ((int) accumulated.size() > n_streamed_chars) {
+                std::string remaining = accumulated.substr(n_streamed_chars);
+                int safe_len = utf8_complete_len(remaining.c_str(), (int) remaining.size());
+                if (safe_len > 0) {
+                    jstring jtoken = env->NewStringUTF(remaining.substr(0, safe_len).c_str());
+                    if (jtoken) {
+                        env->CallVoidMethod(g_stream_callback, g_on_token, jtoken);
+                        env->DeleteLocalRef(jtoken);
+                    }
+                }
+            }
             break;
         }
 
-        // Convert token to text and stream directly to Kotlin
-        char piece[256];
-        int n = llama_token_to_piece(vocab, new_token, piece, sizeof(piece), 0, true);
-        if (n > 0) {
-            piece[n] = '\0';
-            jstring jtoken = env->NewStringUTF(piece);
-            if (jtoken) {
-                env->CallVoidMethod(g_stream_callback, g_on_token, jtoken);
-                env->DeleteLocalRef(jtoken);
+        // Stream new characters to Kotlin (only the delta since last stream)
+        if ((int) accumulated.size() > n_streamed_chars) {
+            // Hold back characters that could be the start of a stop string
+            int max_stop_len = 0;
+            for (int s = 0; stop_strs[s]; s++) {
+                int slen = (int) strlen(stop_strs[s]);
+                if (slen > max_stop_len) max_stop_len = slen;
+            }
+
+            int safe_end = (int) accumulated.size() - max_stop_len;
+            if (safe_end > n_streamed_chars) {
+                // Ensure we don't split a multi-byte UTF-8 character
+                int chunk_len = safe_end - n_streamed_chars;
+                int safe_len = utf8_complete_len(accumulated.c_str() + n_streamed_chars, chunk_len);
+                if (safe_len > 0) {
+                    std::string chunk = accumulated.substr(n_streamed_chars, safe_len);
+                    jstring jtoken = env->NewStringUTF(chunk.c_str());
+                    if (jtoken) {
+                        env->CallVoidMethod(g_stream_callback, g_on_token, jtoken);
+                        env->DeleteLocalRef(jtoken);
+                    }
+                    n_streamed_chars += safe_len;
+                }
             }
         }
 
@@ -558,8 +648,26 @@ Java_com_dark_lora_LoraJNI_generateStreaming(
         n_generated++;
     }
 
+    // Flush any remaining buffered text
+    if ((int) accumulated.size() > n_streamed_chars) {
+        std::string remaining = accumulated.substr(n_streamed_chars);
+        int safe_len = utf8_complete_len(remaining.c_str(), (int) remaining.size());
+        if (safe_len > 0) {
+            jstring jtoken = env->NewStringUTF(remaining.substr(0, safe_len).c_str());
+            if (jtoken) {
+                env->CallVoidMethod(g_stream_callback, g_on_token, jtoken);
+                env->DeleteLocalRef(jtoken);
+            }
+        }
+    }
+
     llama_sampler_free(smpl);
-    ui_log("Streamed %d tokens", n_generated);
+
+    auto t_gen_end = std::chrono::steady_clock::now();
+    double gen_s = std::chrono::duration<double>(t_gen_end - t_gen_start).count();
+    ui_log("Streamed %d tokens in %.2fs (%.1f tok/s)", n_generated, gen_s,
+           gen_s > 0 ? n_generated / gen_s : 0.0);
+
     env->CallVoidMethod(g_stream_callback, g_on_complete);
 }
 

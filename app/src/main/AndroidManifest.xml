@@ -12,13 +12,20 @@
     <application
 
         android:allowBackup="true"
+        android:extractNativeLibs="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
+        android:windowSoftInputMode="adjustResize"
         android:theme="@style/Theme.Trainer">
+
+        <uses-native-library
+            android:name="libcdsprpc.so"
+            android:required="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -1,0 +1,10 @@
+# Copy HTP skel libraries (libggml-htp-v*.so) from build dir to jniLibs
+file(GLOB SKEL_LIBS "${SRC_DIR}/libggml-htp-v*.so")
+foreach(LIB ${SKEL_LIBS})
+    get_filename_component(LIB_NAME ${LIB} NAME)
+    message(STATUS "Copying skel library: ${LIB_NAME}")
+    file(COPY ${LIB} DESTINATION ${DST_DIR})
+endforeach()
+if(NOT SKEL_LIBS)
+    message(STATUS "No skel libraries found in ${SRC_DIR} (DSP build may not have completed)")
+endif()

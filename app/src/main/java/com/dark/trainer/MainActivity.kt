@@ -103,6 +103,7 @@ fun AppContent(
             temperature = chatState.temperature,
             maxTokens = chatState.maxTokens,
             systemPrompt = chatState.systemPrompt,
+            npuEnabled = chatState.npuEnabled,
             onTemperatureChange = { temp ->
                 chatViewModel.updateSettings(temperature = temp)
             },
@@ -111,6 +112,9 @@ fun AppContent(
             },
             onSystemPromptChange = { prompt ->
                 chatViewModel.updateSettings(systemPrompt = prompt)
+            },
+            onNpuEnabledChange = { enabled ->
+                chatViewModel.updateSettings(npuEnabled = enabled)
             },
             onDismiss = {
                 showSettings = false

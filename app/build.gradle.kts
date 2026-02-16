@@ -1,7 +1,14 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+
+val localProperties = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) load(f.inputStream())
 }
 
 android {
@@ -20,6 +27,9 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "SUPABASE_URL", "\"${localProperties.getProperty("supabase.url", "")}\"")
+        buildConfigField("String", "SUPABASE_KEY", "\"${localProperties.getProperty("supabase.key", "")}\"")
     }
 
     buildTypes {
@@ -38,10 +48,13 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // Exclude SDK stub — the real libcdsprpc.so comes from /vendor/lib64/ at runtime
+            excludes += "**/libcdsprpc.so"
         }
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

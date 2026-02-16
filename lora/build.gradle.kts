@@ -26,7 +26,7 @@ android {
 
         ndk {
             abiFilters.clear()
-            abiFilters.addAll(listOf("arm64-v8a", "x86_64"))
+            abiFilters.addAll(listOf("arm64-v8a"))
         }
 
         externalNativeBuild {
@@ -45,11 +45,31 @@ android {
                     ?: System.getenv("LLAMA_CPP_DIR")
                     ?: error("LLAMA_CPP_DIR not found! Add llama.cpp.dir to local.properties")
 
-                arguments(
+                val hexagonSdkDir = localProperties.getProperty("hexagon.sdk.dir")
+                    ?: System.getenv("HEXAGON_SDK_ROOT")
+                    ?: ""
+
+                val hexagonToolsDir = localProperties.getProperty("hexagon.tools.dir")
+                    ?: System.getenv("HEXAGON_TOOLS_ROOT")
+                    ?: ""
+
+                val enableHexagon = hexagonSdkDir.isNotEmpty() && hexagonToolsDir.isNotEmpty()
+
+                val cmakeArgs = mutableListOf(
                     "-DANDROID_STL=c++_shared",
                     "-DQNN_SDK_DIR=$qnnSdkDir",
                     "-DLLAMA_CPP_DIR=$llamaCppDir"
                 )
+
+                if (enableHexagon) {
+                    cmakeArgs.addAll(listOf(
+                        "-DHEXAGON_SDK_ROOT=$hexagonSdkDir",
+                        "-DHEXAGON_TOOLS_ROOT=$hexagonToolsDir",
+                        "-DGGML_HEXAGON=ON"
+                    ))
+                }
+
+                arguments(*cmakeArgs.toTypedArray())
 
                 cppFlags("-std=c++17", "-fexceptions", "-frtti")
 
@@ -72,7 +92,7 @@ android {
     externalNativeBuild {
         cmake {
             path("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+            version = "3.31.4"
         }
     }
 

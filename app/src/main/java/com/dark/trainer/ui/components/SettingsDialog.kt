@@ -3,6 +3,7 @@ package com.dark.trainer.ui.components
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -12,15 +13,18 @@ fun SettingsDialog(
     temperature: Float,
     maxTokens: Int,
     systemPrompt: String,
+    npuEnabled: Boolean,
     onTemperatureChange: (Float) -> Unit,
     onMaxTokensChange: (Int) -> Unit,
     onSystemPromptChange: (String) -> Unit,
+    onNpuEnabledChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     onSave: () -> Unit
 ) {
     var tempTemperature by remember { mutableFloatStateOf(temperature) }
     var tempMaxTokens by remember { mutableIntStateOf(maxTokens) }
     var tempSystemPrompt by remember { mutableStateOf(systemPrompt) }
+    var tempNpuEnabled by remember { mutableStateOf(npuEnabled) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -72,6 +76,30 @@ fun SettingsDialog(
                     )
                 }
 
+                // NPU Toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "NPU (Hexagon)",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            "Offload layers to NPU. Reload model to apply.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = tempNpuEnabled,
+                        onCheckedChange = { tempNpuEnabled = it }
+                    )
+                }
+
                 // System Prompt
                 Column {
                     Text(
@@ -96,6 +124,7 @@ fun SettingsDialog(
                     onTemperatureChange(tempTemperature)
                     onMaxTokensChange(tempMaxTokens)
                     onSystemPromptChange(tempSystemPrompt)
+                    onNpuEnabledChange(tempNpuEnabled)
                     onSave()
                 }
             ) {

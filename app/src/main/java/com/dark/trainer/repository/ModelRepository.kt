@@ -15,7 +15,6 @@ import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URL
-import java.security.MessageDigest
 
 class ModelRepository(private val context: Context) {
 
@@ -46,19 +45,22 @@ class ModelRepository(private val context: Context) {
     }
 
     /**
-     * Download a base model from HuggingFace URL
+     * Download a base model from its download link (GGUF file)
      */
     suspend fun downloadModel(
         model: BaseModel,
         onProgress: (Int) -> Unit = {}
     ): File = withContext(Dispatchers.IO) {
+        val downloadUrl = model.modelDownloadLink
+            ?: throw IllegalStateException("Model '${model.name}' has no download link set yet.")
+
         val modelDir = File(context.filesDir, "models/${model.name}")
         modelDir.mkdirs()
 
         val localFile = File(modelDir, "model.gguf")
 
         // Download file
-        URL(model.modelDownloadLink).openStream().use { input ->
+        URL(downloadUrl).openStream().use { input ->
             FileOutputStream(localFile).use { output ->
                 val buffer = ByteArray(8192)
                 var bytesRead: Int
@@ -74,15 +76,6 @@ class ModelRepository(private val context: Context) {
                         onProgress(progress)
                     }
                 }
-            }
-        }
-
-        // Verify checksum if provided
-        if (model.checksumSha256 != null) {
-            val fileChecksum = calculateSHA256(localFile)
-            if (fileChecksum != model.checksumSha256) {
-                localFile.delete()
-                throw SecurityException("Checksum mismatch! File corrupted.")
             }
         }
 
@@ -233,18 +226,4 @@ class ModelRepository(private val context: Context) {
         return ggufFile?.absolutePath
     }
 
-    /**
-     * Calculate SHA-256 checksum
-     */
-    private fun calculateSHA256(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(8192)
-            var bytesRead: Int
-            while (input.read(buffer).also { bytesRead = it } != -1) {
-                digest.update(buffer, 0, bytesRead)
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
-    }
 }

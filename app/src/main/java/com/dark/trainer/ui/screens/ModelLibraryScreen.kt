@@ -348,6 +348,8 @@ fun BaseModelCard(
     onDownload: () -> Unit,
     onSelectForAdapters: () -> Unit
 ) {
+    val hasDownloadLink = model.modelDownloadLink != null
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -367,33 +369,16 @@ fun BaseModelCard(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
-                    model.description?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
-                    }
 
                     Row(
                         modifier = Modifier.padding(top = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        model.parameterCount?.let {
-                            AssistChip(
-                                onClick = {},
-                                label = { Text(it, style = MaterialTheme.typography.labelSmall) },
-                                modifier = Modifier.height(24.dp)
-                            )
-                        }
-                        model.quantization?.let {
-                            AssistChip(
-                                onClick = {},
-                                label = { Text(it, style = MaterialTheme.typography.labelSmall) },
-                                modifier = Modifier.height(24.dp)
-                            )
-                        }
+                        AssistChip(
+                            onClick = {},
+                            label = { Text("v${model.version}", style = MaterialTheme.typography.labelSmall) },
+                            modifier = Modifier.height(24.dp)
+                        )
                         model.sizeMb?.let {
                             AssistChip(
                                 onClick = {},
@@ -431,7 +416,7 @@ fun BaseModelCard(
                             Spacer(Modifier.width(4.dp))
                             Text("View Adapters")
                         }
-                    } else {
+                    } else if (hasDownloadLink) {
                         Button(
                             onClick = onDownload,
                             modifier = Modifier.weight(1f)
@@ -440,6 +425,12 @@ fun BaseModelCard(
                             Spacer(Modifier.width(4.dp))
                             Text("Download")
                         }
+                    } else {
+                        Text(
+                            "No download link available yet",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }

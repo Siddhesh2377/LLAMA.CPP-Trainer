@@ -24,7 +24,9 @@ data class ChatState(
     val loadedAdapterId: String? = null,
     val temperature: Float = 0.7f,
     val maxTokens: Int = 512,
-    val systemPrompt: String = "You are a helpful AI assistant."
+    val systemPrompt: String = "You are a helpful AI assistant.",
+    val npuEnabled: Boolean = false,
+    val contextSize: Int = 2048
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -44,7 +46,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // Set up log callback
         loraJNI.setLogCallback(object : LoraJNI.LogCallback {
             override fun onLog(message: String) {
-                Log.d(TAG, message)
+                //Log.d(TAG, message)
             }
         })
 
@@ -102,7 +104,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Load a model for chat
      */
-    fun loadModel(baseModelId: String, adapterId: String? = null, nThreads: Int = 0, nCtx: Int = 2048) {
+    fun loadModel(baseModelId: String, adapterId: String? = null, nThreads: Int = 0, nCtx: Int = 512) {
         viewModelScope.launch {
             _chatState.value = _chatState.value.copy(
                 isGenerating = true,
@@ -115,8 +117,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     ?: throw IllegalStateException("Model not downloaded: $baseModelId")
 
                 // Load base model
+                val nGpuLayers = if (_chatState.value.npuEnabled) 99 else 0
                 val result = withContext(Dispatchers.IO) {
-                    loraJNI.loadModel(modelPath, nThreads, nCtx)
+                    loraJNI.loadModel(modelPath, nThreads, nCtx, nGpuLayers)
                 }
 
                 if (result.startsWith("ERROR")) {
@@ -289,11 +292,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Update generation settings
      */
-    fun updateSettings(temperature: Float? = null, maxTokens: Int? = null, systemPrompt: String? = null) {
+    fun updateSettings(temperature: Float? = null, maxTokens: Int? = null, systemPrompt: String? = null, npuEnabled: Boolean? = null) {
         _chatState.value = _chatState.value.copy(
             temperature = temperature ?: _chatState.value.temperature,
             maxTokens = maxTokens ?: _chatState.value.maxTokens,
-            systemPrompt = systemPrompt ?: _chatState.value.systemPrompt
+            systemPrompt = systemPrompt ?: _chatState.value.systemPrompt,
+            npuEnabled = npuEnabled ?: _chatState.value.npuEnabled
         )
     }
 

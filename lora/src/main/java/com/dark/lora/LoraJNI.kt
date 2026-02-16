@@ -32,9 +32,10 @@ class LoraJNI {
      * @param modelPath Absolute path to .gguf model file
      * @param nThreads Number of threads (0 = auto)
      * @param nCtx Context size (0 = default 2048)
+     * @param nGpuLayers Layers to offload to NPU (99 = all, 0 = CPU only)
      * @return Success message or error
      */
-    external fun loadModel(modelPath: String, nThreads: Int, nCtx: Int): String
+    external fun loadModel(modelPath: String, nThreads: Int, nCtx: Int, nGpuLayers: Int = 0): String
 
     /**
      * Load a LoRA adapter and apply it to the current model

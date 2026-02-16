@@ -7,15 +7,9 @@ import kotlinx.serialization.Serializable
 data class BaseModel(
     val id: String,
     val name: String,
-    val description: String? = null,
-    @SerialName("model_download_link") val modelDownloadLink: String,
-    @SerialName("architecture") val architecture: String? = null,  // e.g., "Qwen2.5", "Llama-3.2"
-    @SerialName("parameter_count") val parameterCount: String? = null,  // e.g., "1.5B", "350M"
-    @SerialName("quantization") val quantization: String? = null,  // e.g., "Q4_K_M", "Q8_0"
-    @SerialName("context_length") val contextLength: Int? = null,  // e.g., 2048, 4096
+    @SerialName("model_download_link") val modelDownloadLink: String? = null,  // GGUF base model download URL
     val version: String,
     @SerialName("size_mb") val sizeMb: Int?,
-    @SerialName("checksum_sha256") val checksumSha256: String? = null,
     @SerialName("is_active") val isActive: Boolean,
     @SerialName("created_at") val createdAt: String,
     @SerialName("updated_at") val updatedAt: String
